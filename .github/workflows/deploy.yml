@@ -33,17 +33,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Configure build env
+      - name: Determine base path
+        id: base_path
         run: |
-          echo "VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL }}" >> .env.production
           if [ "${{ github.event.repository.name }}" = "${{ github.repository_owner }}.github.io" ]; then
-            echo "VITE_BASE_PATH=/" >> .env.production
+            echo "value=/" >> "$GITHUB_OUTPUT"
           else
-            echo "VITE_BASE_PATH=/${{ github.event.repository.name }}/" >> .env.production
+            echo "value=/${{ github.event.repository.name }}/" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build frontend
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_BASE_PATH: ${{ steps.base_path.outputs.value }}
         run: npm run build
+
+      - name: Add SPA fallback for GitHub Pages
+        run: cp dist/index.html dist/404.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
