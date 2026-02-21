@@ -1,11 +1,22 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { formatDate, formatDateTime } from "../components/formatters";
+import ProjectCardDetails from "../components/ProjectCardDetails";
+import { formatDateTime } from "../components/formatters";
 import Modal from "../components/Modal";
 import Spinner from "../components/Spinner";
 import { useToast } from "../components/ToastContext";
+import {
+  CATEGORY_OPTIONS,
+  EMPTY_PROJECT_FORM,
+  GYR_OPTIONS,
+  LEGACY_TYPE_OPTIONS,
+  MAJOR_MINOR_OPTIONS,
+  getProjectDisplayName,
+  toProjectPayload,
+  validateProjectForm,
+} from "../constants/project";
 
 const EMPTY_USER_FORM = {
   username: "",
@@ -13,17 +24,13 @@ const EMPTY_USER_FORM = {
   active: true,
 };
 
-const EMPTY_PROJECT_FORM = {
-  title: "",
-  description: "",
-  deadline: "",
-  assigneeUserId: "",
-};
+const MAX_IMAGE_ATTACHMENT_BYTES = 120000;
 
 export default function AdminDashboard() {
   const { session, logout } = useAuth();
   const { pushToast } = useToast();
   const navigate = useNavigate();
+  const imageInputRef = useRef(null);
 
   const [activeTab, setActiveTab] = useState("users");
 
@@ -98,6 +105,47 @@ export default function AdminDashboard() {
     navigate("/login", { replace: true });
   };
 
+  const setProjectField = (field, value) => {
+    setProjectForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const onProjectImageFileChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setProjectForm((prev) => ({ ...prev, imageDataUrl: "", imageName: "" }));
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      pushToast("Only image files are allowed.", "error");
+      setProjectForm((prev) => ({ ...prev, imageDataUrl: "", imageName: "" }));
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+      pushToast("Image attachment is too large. Use an image URL for large files.", "error");
+      setProjectForm((prev) => ({ ...prev, imageDataUrl: "", imageName: "" }));
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setProjectForm((prev) => ({
+        ...prev,
+        imageDataUrl: String(reader.result || ""),
+        imageName: file.name,
+      }));
+    };
+    reader.onerror = () => {
+      pushToast("Failed to read image attachment.", "error");
+      setProjectForm((prev) => ({ ...prev, imageDataUrl: "", imageName: "" }));
+      event.target.value = "";
+    };
+    reader.readAsDataURL(file);
+  };
+
   const submitUser = async (event) => {
     event.preventDefault();
 
@@ -126,21 +174,20 @@ export default function AdminDashboard() {
   const submitProject = async (event) => {
     event.preventDefault();
 
-    if (!projectForm.title.trim() || !projectForm.description.trim() || !projectForm.assigneeUserId) {
-      pushToast("Title, description, and assignee are required.", "error");
+    const validationError = validateProjectForm(projectForm, { requireTeamLead: true });
+    if (validationError) {
+      pushToast(validationError, "error");
       return;
     }
 
     setCreatingProject(true);
     try {
-      await apiClient.createProject(session.token, {
-        title: projectForm.title.trim(),
-        description: projectForm.description.trim(),
-        deadline: projectForm.deadline || "",
-        assigneeUserId: projectForm.assigneeUserId,
-      });
+      await apiClient.createProject(session.token, toProjectPayload(projectForm, { includeAssignee: true }));
       pushToast("Project created.", "success");
       setProjectForm(EMPTY_PROJECT_FORM);
+      if (imageInputRef.current) {
+        imageInputRef.current.value = "";
+      }
       await loadProjects();
     } catch (error) {
       pushToast(error.message, "error");
@@ -312,51 +359,191 @@ export default function AdminDashboard() {
           <div className="card">
             <h2 className="subsection-title">Create Project</h2>
             <form className="form" onSubmit={submitProject}>
-              <label className="form-label">
-                Title
-                <input
-                  className="input"
-                  value={projectForm.title}
-                  onChange={(event) => setProjectForm((prev) => ({ ...prev, title: event.target.value }))}
-                  placeholder="Project title"
-                />
-              </label>
+              <div className="form-grid form-grid--two">
+                <label className="form-label">
+                  Team Lead
+                  <select
+                    className="input"
+                    value={projectForm.assigneeUserId}
+                    onChange={(event) => setProjectField("assigneeUserId", event.target.value)}
+                  >
+                    <option value="">Select active user</option>
+                    {activeUsers.map((user) => (
+                      <option key={user.userId} value={user.userId}>
+                        {user.username} ({user.userId})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="form-label">
+                  Legacy/Key less
+                  <select
+                    className="input"
+                    value={projectForm.legacyType}
+                    onChange={(event) => setProjectField("legacyType", event.target.value)}
+                  >
+                    <option value="">Select type</option>
+                    {LEGACY_TYPE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="form-label">
+                  Customer
+                  <input
+                    className="input"
+                    value={projectForm.customer}
+                    onChange={(event) => setProjectField("customer", event.target.value)}
+                    placeholder="Customer name"
+                  />
+                </label>
+
+                <label className="form-label">
+                  Model
+                  <input
+                    className="input"
+                    value={projectForm.model}
+                    onChange={(event) => setProjectField("model", event.target.value)}
+                    placeholder="Model name"
+                  />
+                </label>
+
+                <label className="form-label">
+                  Category (A/B/C)
+                  <select
+                    className="input"
+                    value={projectForm.category}
+                    onChange={(event) => setProjectField("category", event.target.value)}
+                  >
+                    <option value="">Select category</option>
+                    {CATEGORY_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="form-label">
+                  Major/Minor
+                  <select
+                    className="input"
+                    value={projectForm.majorMinor}
+                    onChange={(event) => setProjectField("majorMinor", event.target.value)}
+                  >
+                    <option value="">Select type</option>
+                    {MAJOR_MINOR_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="form-label">
+                  Effort Days
+                  <input
+                    className="input"
+                    value={projectForm.effortDays}
+                    onChange={(event) => setProjectField("effortDays", event.target.value)}
+                    placeholder="e.g. 16"
+                  />
+                </label>
+
+                <label className="form-label">
+                  Platform
+                  <input
+                    className="input"
+                    value={projectForm.platform}
+                    onChange={(event) => setProjectField("platform", event.target.value)}
+                    placeholder="e.g. EV"
+                  />
+                </label>
+
+                <label className="form-label">
+                  SOP Date
+                  <input
+                    type="date"
+                    className="input"
+                    value={projectForm.sopDate}
+                    onChange={(event) => setProjectField("sopDate", event.target.value)}
+                  />
+                </label>
+
+                <label className="form-label">
+                  Volume (Lacs)
+                  <input
+                    className="input"
+                    value={projectForm.volumeLacs}
+                    onChange={(event) => setProjectField("volumeLacs", event.target.value)}
+                    placeholder="e.g. 0.80"
+                  />
+                </label>
+
+                <label className="form-label">
+                  Business Potential / Annum (Lacs)
+                  <input
+                    className="input"
+                    value={projectForm.businessPotentialLacs}
+                    onChange={(event) => setProjectField("businessPotentialLacs", event.target.value)}
+                    placeholder="e.g. 1280"
+                  />
+                </label>
+
+                <label className="form-label">
+                  GYR
+                  <select
+                    className="input"
+                    value={projectForm.gyrStatus}
+                    onChange={(event) => setProjectField("gyrStatus", event.target.value)}
+                  >
+                    <option value="">Select status</option>
+                    {GYR_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="form-label">
+                  Image URL
+                  <input
+                    className="input"
+                    value={projectForm.imageUrl}
+                    onChange={(event) => setProjectField("imageUrl", event.target.value)}
+                    placeholder="https://example.com/image.jpg"
+                  />
+                </label>
+              </div>
 
               <label className="form-label">
-                Description
+                Product Description
                 <textarea
                   className="input textarea"
-                  value={projectForm.description}
-                  onChange={(event) => setProjectForm((prev) => ({ ...prev, description: event.target.value }))}
-                  placeholder="Project summary"
-                  rows={5}
+                  value={projectForm.productDescription}
+                  onChange={(event) => setProjectField("productDescription", event.target.value)}
+                  placeholder="Detailed product description"
+                  rows={4}
                 />
               </label>
 
               <label className="form-label">
-                Deadline (Optional)
+                Image Attachment (Optional)
                 <input
-                  type="date"
-                  className="input"
-                  value={projectForm.deadline}
-                  onChange={(event) => setProjectForm((prev) => ({ ...prev, deadline: event.target.value }))}
+                  ref={imageInputRef}
+                  type="file"
+                  className="input file-input"
+                  accept="image/*"
+                  onChange={onProjectImageFileChange}
                 />
-              </label>
-
-              <label className="form-label">
-                Assignee
-                <select
-                  className="input"
-                  value={projectForm.assigneeUserId}
-                  onChange={(event) => setProjectForm((prev) => ({ ...prev, assigneeUserId: event.target.value }))}
-                >
-                  <option value="">Select active user</option>
-                  {activeUsers.map((user) => (
-                    <option key={user.userId} value={user.userId}>
-                      {user.username} ({user.userId})
-                    </option>
-                  ))}
-                </select>
+                <span className="input-hint">
+                  Small image only. For large images, use Image URL (JSONP request size limitation).
+                </span>
               </label>
 
               <button className="primary-button" type="submit" disabled={creatingProject}>
@@ -378,19 +565,15 @@ export default function AdminDashboard() {
                 <p className="muted">No projects available.</p>
               ) : (
                 projects.map((project) => (
-                  <article key={project.projectId} className="project-card">
-                    <div className="project-card__head">
-                      <h3>{project.title}</h3>
-                      <span className="pill">{project.projectId}</span>
-                    </div>
-                    <p className="muted">Assignee: {project.assigneeUsername || "-"}</p>
-                    <p className="muted">Deadline: {formatDate(project.deadline)}</p>
-                    <p className="muted">Created: {formatDateTime(project.createdAt)}</p>
-                    <p className="status-text">Latest: {project.statusLatest || "No updates yet"}</p>
-                    <button type="button" className="secondary-button" onClick={() => openUpdates(project)}>
-                      View Updates
-                    </button>
-                  </article>
+                  <ProjectCardDetails
+                    key={project.projectId}
+                    project={project}
+                    actions={
+                      <button type="button" className="secondary-button" onClick={() => openUpdates(project)}>
+                        View Updates
+                      </button>
+                    }
+                  />
                 ))
               )}
             </div>
@@ -399,7 +582,7 @@ export default function AdminDashboard() {
       )}
 
       <Modal
-        title={selectedProject ? `Project Updates - ${selectedProject.title}` : "Project Updates"}
+        title={selectedProject ? `Project Updates - ${getProjectDisplayName(selectedProject)}` : "Project Updates"}
         open={updatesOpen}
         onClose={() => setUpdatesOpen(false)}
       >
@@ -445,5 +628,3 @@ export default function AdminDashboard() {
     </section>
   );
 }
-
-
