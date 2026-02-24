@@ -263,6 +263,17 @@ button:disabled {
   overflow: auto;
 }
 
+.table-filters {
+  display: grid;
+  grid-template-columns: 2fr repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.table-filters--wide {
+  grid-template-columns: 2fr repeat(3, minmax(0, 1fr));
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -538,7 +549,9 @@ button:disabled {
   }
 
   .form-grid--two,
-  .project-meta-grid {
+  .project-meta-grid,
+  .table-filters,
+  .table-filters--wide {
     grid-template-columns: 1fr;
   }
 

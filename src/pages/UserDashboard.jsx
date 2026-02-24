@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiClient } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import ProjectCardDetails from "../components/ProjectCardDetails";
-import { formatDateTime } from "../components/formatters";
+import { formatDate, formatDateTime } from "../components/formatters";
 import Modal from "../components/Modal";
 import Spinner from "../components/Spinner";
 import { useToast } from "../components/ToastContext";
@@ -20,6 +19,20 @@ import {
 
 const MAX_IMAGE_ATTACHMENT_BYTES = 120000;
 
+function normalizeGyrValue(value) {
+  const text = String(value || "").trim().toUpperCase();
+  if (text === "GREEN") {
+    return "G";
+  }
+  if (text === "YELLOW") {
+    return "Y";
+  }
+  if (text === "RED") {
+    return "R";
+  }
+  return text;
+}
+
 export default function UserDashboard() {
   const { session, logout } = useAuth();
   const { pushToast } = useToast();
@@ -30,6 +43,10 @@ export default function UserDashboard() {
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [projectForm, setProjectForm] = useState(EMPTY_PROJECT_FORM);
+  const [showCreateProjectForm, setShowCreateProjectForm] = useState(false);
+  const [projectSearchTerm, setProjectSearchTerm] = useState("");
+  const [projectCategoryFilter, setProjectCategoryFilter] = useState("");
+  const [projectGyrFilter, setProjectGyrFilter] = useState("");
 
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
@@ -195,6 +212,32 @@ export default function UserDashboard() {
     }
   };
 
+  const filteredProjects = useMemo(() => {
+    const normalizedSearch = projectSearchTerm.trim().toLowerCase();
+
+    return projects.filter((project) => {
+      const matchesSearch =
+        !normalizedSearch ||
+        [
+          project.projectId,
+          project.model,
+          project.title,
+          project.customer,
+          project.category,
+          project.platform,
+          project.legacyType,
+          project.statusLatest,
+        ].some((value) => String(value || "").toLowerCase().includes(normalizedSearch));
+
+      const matchesCategory =
+        !projectCategoryFilter || String(project.category || "").trim().toUpperCase() === projectCategoryFilter;
+
+      const matchesGyr = !projectGyrFilter || normalizeGyrValue(project.gyrStatus) === projectGyrFilter;
+
+      return matchesSearch && matchesCategory && matchesGyr;
+    });
+  }, [projectCategoryFilter, projectGyrFilter, projectSearchTerm, projects]);
+
   return (
     <section className="page">
       <div className="dashboard-header card">
@@ -207,9 +250,19 @@ export default function UserDashboard() {
         </button>
       </div>
 
-      <div className="grid two-col">
-        <div className="card">
+      <div className="card">
+        <div className="section-row">
           <h2 className="subsection-title">Create My Project</h2>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => setShowCreateProjectForm((prev) => !prev)}
+          >
+            {showCreateProjectForm ? "Hide Create Project" : "Create New Project"}
+          </button>
+        </div>
+
+        {showCreateProjectForm ? (
           <form className="form" onSubmit={submitProject}>
             <div className="form-grid form-grid--two">
               <label className="form-label">
@@ -386,38 +439,94 @@ export default function UserDashboard() {
               {creatingProject ? <Spinner /> : "Create Project"}
             </button>
           </form>
+        ) : (
+          <p className="muted">Click Create New Project to open the project form.</p>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="section-row">
+          <h2 className="subsection-title">My Projects</h2>
+          <button type="button" className="secondary-button" onClick={loadProjects} disabled={loadingProjects}>
+            {loadingProjects ? <Spinner /> : "Refresh"}
+          </button>
         </div>
 
-        <div className="card">
-          <div className="section-row">
-            <h2 className="subsection-title">My Projects</h2>
-            <button type="button" className="secondary-button" onClick={loadProjects} disabled={loadingProjects}>
-              {loadingProjects ? <Spinner /> : "Refresh"}
-            </button>
-          </div>
+        <div className="table-filters">
+          <input
+            className="input"
+            value={projectSearchTerm}
+            onChange={(event) => setProjectSearchTerm(event.target.value)}
+            placeholder="Search by project, model, customer, status"
+          />
+          <select
+            className="input"
+            value={projectCategoryFilter}
+            onChange={(event) => setProjectCategoryFilter(event.target.value)}
+          >
+            <option value="">All Categories</option>
+            {CATEGORY_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <select className="input" value={projectGyrFilter} onChange={(event) => setProjectGyrFilter(event.target.value)}>
+            <option value="">All GYR</option>
+            {GYR_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
-          <div className="project-list">
-            {projects.length === 0 ? (
-              <p className="muted">No projects assigned yet.</p>
-            ) : (
-              projects.map((project) => (
-                <ProjectCardDetails
-                  key={project.projectId}
-                  project={project}
-                  actions={
-                    <>
-                      <button type="button" className="primary-button" onClick={() => openAddUpdate(project)}>
-                        Add Update
-                      </button>
-                      <button type="button" className="secondary-button" onClick={() => openViewUpdates(project)}>
-                        View Updates
-                      </button>
-                    </>
-                  }
-                />
-              ))
-            )}
-          </div>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Project ID</th>
+                <th>Model</th>
+                <th>Customer</th>
+                <th>Category</th>
+                <th>GYR</th>
+                <th>SOP</th>
+                <th>Latest Update</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredProjects.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="empty-cell">
+                    {projects.length === 0 ? "No projects assigned yet." : "No projects match current filters."}
+                  </td>
+                </tr>
+              ) : (
+                filteredProjects.map((project) => (
+                  <tr key={project.projectId}>
+                    <td>{project.projectId || "-"}</td>
+                    <td>{project.model || project.title || "-"}</td>
+                    <td>{project.customer || "-"}</td>
+                    <td>{project.category || "-"}</td>
+                    <td>{normalizeGyrValue(project.gyrStatus) || "-"}</td>
+                    <td>{formatDate(project.sopDate || project.deadline)}</td>
+                    <td>{project.statusLatest || "No updates yet"}</td>
+                    <td>
+                      <div className="button-row">
+                        <button type="button" className="primary-button" onClick={() => openAddUpdate(project)}>
+                          Add Update
+                        </button>
+                        <button type="button" className="secondary-button" onClick={() => openViewUpdates(project)}>
+                          View Updates
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -457,7 +566,7 @@ export default function UserDashboard() {
                   <article key={update.updateId} className="update-card">
                     <p>{update.remark}</p>
                     <p className="muted">
-                      {update.assigneeUsername} · {formatDateTime(update.createdAt)}
+                      {update.assigneeUsername} | {formatDateTime(update.createdAt)}
                     </p>
                   </article>
                 ))
@@ -485,7 +594,7 @@ export default function UserDashboard() {
                 <article key={update.updateId} className="update-card">
                   <p>{update.remark}</p>
                   <p className="muted">
-                    {update.assigneeUsername} · {formatDateTime(update.createdAt)}
+                    {update.assigneeUsername} | {formatDateTime(update.createdAt)}
                   </p>
                 </article>
               ))
